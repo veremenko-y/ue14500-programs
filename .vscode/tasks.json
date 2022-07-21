@@ -1,0 +1,52 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "type": "shell",
+            "command": ".\\build.ps1",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [{
+                "owner": "vbcc",
+                "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": {
+                    "regexp": "^((warning|error) \\d*) in line (\\d*) of \"(.*?)\": (.*)$",
+                    "file": 4,
+                    "line": 3,
+                    "severity": 1,
+                    "message": 5
+                }
+            }, {
+                "owner": "vbcc",
+                "fileLocation": ["absolute"],
+                "pattern": {
+                    "regexp": "^(warning|error) \\d* in (.*)$",
+                    "severity": 1,
+                    "message": 2
+                }
+            }, {
+                "owner": "vbcc",
+                "fileLocation": ["absolute"],
+                "pattern": {
+                    "regexp": "[a-z0-9]\\.o: In \"(.*?)\":\\n(Error).*?:.*?: (.*?)\\n",
+                    "severity": 2,
+                    "message": 3,
+                    "loop": true
+                }
+            }],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "clear": true,
+                "showReuseMessage": false
+            }
+        }
+    ]
+}

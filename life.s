@@ -44,15 +44,7 @@ CNT_BITS = 5
     .repeat $30,I
     sto I
     .endrepeat
-    ; one
-    ; sto field + 1 * FIELD_W + 2
-    ; sto field + 1 * FIELD_W + 3
-    ; sto field + 1 * FIELD_W + 4
-    ; sto field + 2 * FIELD_W + 1
-    ; sto field + 2 * FIELD_W + 2
-    ; sto field + 2 * FIELD_W + 3
-
-    ; do not clear high memory
+    ; do not clear high memory, leave random
 
     oen HIGH
     m_print "\x01"
@@ -87,9 +79,6 @@ CNT_BITS = 5
         nand tmp
         xor HIGH
         ; RR = 1 if do not equal 2 or 3
-        .if XX = 1 && YY = 2
-            ;m_brk
-        .endif
         skz
         stoc addrNew ; stode dead
     oen dead ; if dead

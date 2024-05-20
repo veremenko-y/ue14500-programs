@@ -1,0 +1,724 @@
+ca65 V2.19 - Git d90cd11
+Main file   : advtape.s
+Current file: advtape.s
+
+000000r 1               ; Simple input test.
+000000r 1               
+000000r 1               .include "sdk/ue14500-tape.inc"
+000000r 2               .feature ubiquitous_idents
+000000r 2               .feature string_escapes
+000000r 2               .setcpu "none"
+000000r 2               
+000000r 2               ; Real-ish tape data
+000000r 2               ;   16 bit data bus, first 4 bits are ignored but stored in
+000000r 2               ;   executable in current implementation
+000000r 2               ;   8 bit address bus
+000000r 2               ;   xxxxIIII DDDDDDDD
+000000r 2               ; IO xxNNNNNN (first two bits are masked):
+000000r 2               ;   LD/STO  0x30-0x37   IO
+000000r 2               ;       STO 0x30     - Trigger to read 1 bit from input - yes/no
+000000r 2               ;       LD 0x30      - Read result
+000000r 2               ;       STO 0x31     - Write 7 byte ASCII into terminal
+000000r 2               ;       STO 0x32     - Break (any value)
+000000r 2               ;       0x33-0x37 - Reserved
+000000r 2               ;   LD/STO  0x38        QRR
+000000r 2               ;   LD/STO  0x39        RR
+000000r 2               ;   LD      0x3A-0x3B   High
+000000r 2               ;   LD      0x3C-0x3F   Low
+000000r 2               
+000000r 2               ; 0000 0: NOP0 = No change in registers. RR -> RR. FLG0 high.
+000000r 2               ; 0001 1: LD   = Load result register. Data -> RR.
+000000r 2               ; 0010 2: ADD  = Addition. D + RR -> RR.
+000000r 2               ; 0011 3: SUB  = Subtraction. QD + RR -> RR.
+000000r 2               ; 0100 4: ONE  = Force one. 1 -> RR. 0 -> CAR.
+000000r 2               ; 0101 5: NAND = Logical NAND. Q(RR * D) -> RR.
+000000r 2               ; 0110 6: OR   = Logical OR. RR + D -> RR.
+000000r 2               ; 0111 7: XOR  = Exclusive OR. RR != D -> RR.
+000000r 2               ; 1000 8: STO  = Store. RR -> Data. Write high if OEN.
+000000r 2               ; 1001 9: STOC = Store complement. QRR -> Data. Write high if OEN.
+000000r 2               ; 1010 A: IEN  = Input enable. D -> IEN.
+000000r 2               ; 1011 B: OEN  = Output enable. D -> OEN.
+000000r 2               ; 1100 C: JMP  = Jump. Jump high.
+000000r 2               ; 1101 D: RTN  = Return. RTN high. 1 -> Skip.
+000000r 2               ; 1110 E: SKZ  = Skip if zero. 1 -> Skip if RR == 0.
+000000r 2               ; 1111 F: NOPF = No change in registers. RR -> RR. FLGF high.
+000000r 2               
+000000r 2               .macro nop0 addr   ; 0000: NOP0 = No change in registers. RR -> RR. FLG0 high.
+000000r 2                   .byte 0
+000000r 2                   .if .blank(addr)
+000000r 2                   .byte 0
+000000r 2                   .else
+000000r 2                   .byte <addr
+000000r 2                   .endif
+000000r 2               .endmacro
+000000r 2               .macro ld addr    ; 0001: LD   = Load result register. Data -> RR.
+000000r 2                   .byte 1
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro add addr    ; 0010: ADD  = Addition. D + RR -> RR.
+000000r 2                   .byte 2
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro sub addr    ; 0011: SUB  = Subtraction. QD + RR -> RR.
+000000r 2                   .byte 3
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro one    ; 0100: ONE  = Force one. 1 -> RR. 0 -> CAR.
+000000r 2                   .byte 4
+000000r 2                   .byte 0
+000000r 2               .endmacro
+000000r 2               .macro nand addr   ; 0101: NAND = Logical NAND. Q(RR * D) -> RR.
+000000r 2                   .byte 5
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro or addr     ; 0110: OR   = Logical OR. RR + D -> RR.
+000000r 2                   .byte 6
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro xor addr    ; 0111: XOR  = Exclusive OR. RR != D -> RR.
+000000r 2                   .byte 7
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro sto addr    ; 1000: STO  = Store. RR -> Data. Write high if OEN.
+000000r 2                   .byte 8
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro stoc addr   ; 1001: STOC = Store complement. QRR -> Data. Write high if OEN.
+000000r 2                   .byte 9
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro ien addr   ; 1010: IEN  = Input enable. D -> IEN.
+000000r 2                   .byte 10
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro oen addr   ; 1011: OEN  = Output enable. D -> OEN.
+000000r 2                   .byte 11
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro jmp addr   ; 1100: JMP  = Jump. Jump high.
+000000r 2                   .byte 12
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro rtn   ; 1101: RTN  = Return. RTN high. 1 -> Skip.
+000000r 2                   .byte 13
+000000r 2                   .byte 0
+000000r 2               .endmacro
+000000r 2               .macro skz   ; 1110: SKZ  = Skip if zero. 1 -> Skip if RR == 0.
+000000r 2                   .byte 14
+000000r 2                   .byte 0
+000000r 2               .endmacro
+000000r 2               .macro nopf addr  ; 1111: NOPF = No change
+000000r 2                   .byte 15
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .define OUTREG $28 ; o61
+000000r 2               .define INREG $30 ; o60
+000000r 2               .define QRR $38 ; o70
+000000r 2               .define RR $39 ; o71
+000000r 2               .define HIGH $3a ; o72
+000000r 2               .define LOW $3c ; o74
+000000r 2               .define SHIFTOUT $3c ; o74
+000000r 2               .define BRK $3f ; o77
+000000r 2               
+000000r 2               .macro m_printbyte bits, addr
+000000r 2                   .repeat 8,I
+000000r 2                       .if (I < bits)
+000000r 2                           ld addr+I
+000000r 2                           sto OUTREG+I
+000000r 2                       .else
+000000r 2                           one
+000000r 2                           stoc OUTREG+I
+000000r 2                       .endif
+000000r 2                   .endrepeat
+000000r 2                   sto SHIFTOUT
+000000r 2               .endmacro
+000000r 2               
+000000r 2               
+000000r 2               .macro m_printbyteimm value
+000000r 2                   .repeat 8,I
+000000r 2                   .if (value & (1 << I)) <> 0
+000000r 2                   sto OUTREG+I ; 1
+000000r 2                   .else
+000000r 2                   stoc OUTREG+I ; 0
+000000r 2                   .endif
+000000r 2                   .endrepeat
+000000r 2                   sto SHIFTOUT
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_print str
+000000r 2                   one
+000000r 2                   .repeat .strlen(str), I
+000000r 2                   __tmp .set .strat(str, I)
+000000r 2                   m_printbyteimm __tmp
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_brk
+000000r 2                   sto BRK
+000000r 2               .endmacro
+000000r 2               
+000000r 2               ; Assumes RR register is 0 at start
+000000r 2               .macro m_programstart
+000000r 2                   ien HIGH
+000000r 2                   ien	HIGH
+000000r 2                   oen HIGH
+000000r 2                   oen QRR
+000000r 2                   .repeat $30,I
+000000r 2                   sto I
+000000r 2                   .endrepeat
+000000r 2                   .repeat $bf,I
+000000r 2                   sto $40+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               ; Must reset RR to 1 to avoid clearing RAM
+000000r 2               .macro m_programend
+000000r 2                   one
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_save_oen tmpAddr
+000000r 2                   one
+000000r 2                   sto tmpAddr
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_restore_oen tmpAddr
+000000r 2                   oen tmpAddr
+000000r 2                   one
+000000r 2                   stoc tmpAddr ; zero tmpoen if was 1
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_clc ; clear carry
+000000r 2                   one
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_sec ; set carry
+000000r 2                   ld HIGH
+000000r 2                   add HIGH
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_ctrr ; transfer carry to RR
+000000r 2                   ld LOW
+000000r 2                   add LOW
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_load bits, dstAddr, value
+000000r 2                   one
+000000r 2                   .repeat bits,I
+000000r 2                       .if (value & (1 << I)) <> 0
+000000r 2                       sto dstAddr+I; 1
+000000r 2                       .else
+000000r 2                       stoc dstAddr+I; 0
+000000r 2                       .endif
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_fill bits, dstAddr, value
+000000r 2                   one
+000000r 2                   .repeat bits,I
+000000r 2                       .if value = 0
+000000r 2                       stoc dstAddr+I; 0
+000000r 2                       .elseif value = 1
+000000r 2                       sto dstAddr+I; 1
+000000r 2                       .else
+000000r 2                       .out "Value must be 0 or 1"
+000000r 2                       .endif
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_cmp bits, targetAddr, compAddr
+000000r 2                   ; C: A>=B
+000000r 2                   ; !C: A<B
+000000r 2                   m_sec
+000000r 2                   .repeat bits,I
+000000r 2                       ld targetAddr+I
+000000r 2                       sub compAddr+I
+000000r 2                   .endrepeat
+000000r 2                   m_ctrr
+000000r 2                   .if .referenced(CFlag)
+000000r 2                   sto CFlag
+000000r 2                   .endif
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_cmpimmz bits, targetAddr, compValue
+000000r 2                   ; C: A>=B
+000000r 2                   ; !C: A<B
+000000r 2                   ; .out .sprintf("Cmp %d", compValue)
+000000r 2                   ; .if .not .referenced(ZFlag)
+000000r 2                   ;     .out "Memory for 1 bit with label ZFlag must be defined to use this macro."
+000000r 2                   ; .endif
+000000r 2                   one
+000000r 2                   stoc ZFlag
+000000r 2                   m_sec
+000000r 2                   .repeat bits,I
+000000r 2                       ld targetAddr+I
+000000r 2                       .if (compValue & (1 << I)) <> 0
+000000r 2                       ; .out "1"
+000000r 2                       sub HIGH
+000000r 2                       .else
+000000r 2                       ; .out "0"
+000000r 2                       sub LOW
+000000r 2                       .endif
+000000r 2                       or ZFlag ; z is 1 if result is 0
+000000r 2                       sto ZFlag
+000000r 2                   .endrepeat
+000000r 2                   .if .referenced(CFlag)
+000000r 2                   m_ctrr
+000000r 2                   sto CFlag
+000000r 2                   ld ZFlag ; z is 1 if carry is 1
+000000r 2                   .endif
+000000r 2                   stoc ZFlag ; invert z to get 1 if result is 0
+000000r 2                   ld ZFlag
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_cmpimm bits, targetAddr, compValue
+000000r 2                   ; C: A>=B
+000000r 2                   ; !C: A<B
+000000r 2                   m_sec
+000000r 2                   .repeat bits,I
+000000r 2                       ld targetAddr+I
+000000r 2                       .if (compValue & (1 << I)) <> 0
+000000r 2                       sub HIGH
+000000r 2                       .else
+000000r 2                       sub LOW
+000000r 2                       .endif
+000000r 2                   .endrepeat
+000000r 2                   m_ctrr
+000000r 2                   .if .referenced(CFlag)
+000000r 2                   sto CFlag
+000000r 2                   .endif
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_subout bits, op1Addr, op2Addr, outAddr
+000000r 2                   m_sec
+000000r 2                   .repeat bits,I
+000000r 2                   ld op1Addr+I
+000000r 2                   sub op2Addr+I
+000000r 2                   sto outAddr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_sub bits, op1Addr, op2Addr
+000000r 2                   m_subout bits, op1Addr, op2Addr, op1Addr
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_subimm bits, op1Addr, op2Value
+000000r 2                   m_sec
+000000r 2                   .repeat bits,I
+000000r 2                   ld op1Addr+I
+000000r 2                   .if (op2Value & (1 << I)) <> 0
+000000r 2                   sub HIGH
+000000r 2                   .else
+000000r 2                   sub LOW
+000000r 2                   .endif
+000000r 2                   sto op1Addr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_asl bits, value
+000000r 2                   m_clc
+000000r 2                   .repeat bits,I
+000000r 2                   ld value+I
+000000r 2                   add value+I
+000000r 2                   sto value+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_lsr bits, value
+000000r 2                   m_clc
+000000r 2                   .repeat bits,I
+000000r 2                   ld value+(bits-I-1)
+000000r 2                   add value+(bits-I-1)
+000000r 2                   sto value+(bits-I-1)
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               ; rotate left with carry
+000000r 2               .macro m_rol bits, value
+000000r 2                   .repeat bits,I
+000000r 2                   ld value+I
+000000r 2                   add value+I
+000000r 2                   sto value+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               ; rotate ror with carry
+000000r 2               .macro m_ror bits, value
+000000r 2                   .repeat bits,I
+000000r 2                   ld value+(bits-I-1)
+000000r 2                   add value+(bits-I-1)
+000000r 2                   sto value+(bits-I-1)
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_copy bits, srcAddr, dstAddr
+000000r 2                   .repeat bits,I
+000000r 2                   ld srcAddr+I
+000000r 2                   sto dstAddr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_addout bits, op1Addr, op2Addr, outAddr
+000000r 2                   m_clc
+000000r 2                   .repeat bits,I
+000000r 2                   ld op1Addr+I
+000000r 2                   add op2Addr+I
+000000r 2                   sto outAddr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_add bits, op1Addr, op2Addr
+000000r 2                   m_addout bits, op1Addr, op2Addr, op1Addr
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_adcimm bits, op1Addr, op2Value
+000000r 2                   .repeat bits,I
+000000r 2                   ld op1Addr+I
+000000r 2                   .if (op2Value & (1 << I)) <> 0
+000000r 2                   add HIGH
+000000r 2                   .else
+000000r 2                   add LOW
+000000r 2                   .endif
+000000r 2                   sto op1Addr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_xor bits, op1Addr, op2Value
+000000r 2                   .repeat bits,I
+000000r 2                   ld op1Addr+I
+000000r 2                   .if (op2Value & (1 << I)) <> 0
+000000r 2                   xor HIGH
+000000r 2                   .else
+000000r 2                   xor LOW
+000000r 2                   .endif
+000000r 2                   sto op1Addr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_addimm bits, op1Addr, op2Value
+000000r 2                   m_clc
+000000r 2                   .repeat bits,I
+000000r 2                   ld op1Addr+I
+000000r 2                   .if (op2Value & (1 << I)) <> 0
+000000r 2                   add HIGH
+000000r 2                   .else
+000000r 2                   add LOW
+000000r 2                   .endif
+000000r 2                   sto op1Addr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro __m_sqr16_iter valueAddr, resultAddr
+000000r 2               .scope
+000000r 2                   tempsq = scratchpad
+000000r 2                   currentbitsq = scratchpad + 8
+000000r 2               
+000000r 2                   m_asl 8, resultAddr ; low * 2
+000000r 2                   m_rol 8, resultAddr+8 ; high * 2 + carry
+000000r 2                   m_asl 8, currentbitsq ; shift number byte
+000000r 2                   m_ctrr ; read carry
+000000r 2                   oen RR ; if carry = 1
+000000r 2                   m_add 8, resultAddr, tempsq
+000000r 2                   m_adcimm 8, resultAddr+8, 0 ; add carry to result
+000000r 2                   oen tmpoen
+000000r 2               .endscope
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_sqr16 valueAddr, resultAddr
+000000r 2               .scope
+000000r 2                   tempsq = scratchpad
+000000r 2                   currentbitsq = scratchpad + 8
+000000r 2               
+000000r 2                   one
+000000r 2                   sto tmpoen
+000000r 2               
+000000r 2                   m_load 8, resultAddr, 0
+000000r 2                   m_copy 8, valueAddr, currentbitsq ; save low
+000000r 2                   ld valueAddr+15 ; check if negative
+000000r 2                   oen RR
+000000r 2                   m_xor 8, currentbitsq, $FF ; negate low byte
+000000r 2                   m_addimm 8, currentbitsq, 1 ; +1
+000000r 2                   oen tmpoen
+000000r 2                   m_copy 8, currentbitsq, tempsq ; save low ABS
+000000r 2               
+000000r 2                   ; do this 8 times
+000000r 2                   .repeat 8
+000000r 2                   __m_sqr16_iter valueAddr, resultAddr
+000000r 2                   .endrepeat
+000000r 2               
+000000r 2                   oen tmpoen
+000000r 2                   one
+000000r 2                   stoc tmpoen ; zero tmpoen if was 1
+000000r 2               .endscope
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_mul16 op1Addr, op2Addr, resultAddr
+000000r 2               .scope
+000000r 2                   tempOp1 = scratchpad
+000000r 2                   tempOp2 = tempOp1 + 16
+000000r 2                   sign = tempOp2 + 16
+000000r 2               
+000000r 2                   one ; store current O
+000000r 2                   sto tmpoen
+000000r 2               
+000000r 2                   m_copy 16, op2Addr, tempOp2
+000000r 2                   ld tempOp2+15 ; calculate sign
+000000r 2                   sto sign
+000000r 2                   oen sign ; if negative, invert the number
+000000r 2                   m_xor 16, tempOp2, $ffff
+000000r 2                   m_addimm 16, tempOp2, 1
+000000r 2                   oen tmpoen
+000000r 2               
+000000r 2                   m_load 16, tempOp1, 0
+000000r 2                   m_copy 16, op1Addr, resultAddr
+000000r 2                   m_lsr 16, resultAddr
+000000r 2                   m_ctrr
+000000r 2                   sto CFlag
+000000r 2                   ; do this 8 times
+000000r 2                   .repeat 16
+000000r 2                       ; using oen RR or oen CFlag is bad
+000000r 2                       ; because they can be 0 or 1 depending on what ran first
+000000r 2                       ; but it's alright here, because when this code runs it doesn't
+000000r 2                       ; garble anything, then tmpoen restores the O state
+000000r 2                       oen CFlag ; if C = 0
+000000r 2                       m_sec
+000000r 2                       m_add 16, tempOp1, tempOp2
+000000r 2               
+000000r 2                       oen tmpoen ; always
+000000r 2                       m_clc
+000000r 2                       m_ror 16, tempOp1
+000000r 2                       m_ror 16, resultAddr
+000000r 2                       m_ctrr
+000000r 2                       sto CFlag
+000000r 2                   .endrepeat
+000000r 2               
+000000r 2                   oen sign ; negate result if negative
+000000r 2                   m_xor 16, resultAddr, $ffff
+000000r 2                   m_addimm 16, resultAddr, 1
+000000r 2                   oen tmpoen
+000000r 2                   one
+000000r 2                   stoc tmpoen ; zero tmpoen if was 1
+000000r 2               .endscope
+000000r 2               .endmacro
+000000r 2               
+000000r 1               
+000000r 1               .segment "MEMLOW"
+000000r 1  xx           temp: .res 1
+000001r 1               
+000001r 1               .segment "CODE"
+000000r 1  0A 3A 0A 3A      m_programstart
+000004r 1  0B 3A 0B 38  
+000008r 1  08 00 08 01  
+00000Cr 1  08 02 08 03  
+000010r 1  08 04 08 05  
+000014r 1  08 06 08 07  
+000018r 1  08 08 08 09  
+00001Cr 1  08 0A 08 0B  
+000020r 1  08 0C 08 0D  
+000024r 1  08 0E 08 0F  
+000028r 1  08 10 08 11  
+00002Cr 1  08 12 08 13  
+000030r 1  08 14 08 15  
+000034r 1  08 16 08 17  
+000038r 1  08 18 08 19  
+00003Cr 1  08 1A 08 1B  
+000040r 1  08 1C 08 1D  
+000044r 1  08 1E 08 1F  
+000048r 1  08 20 08 21  
+00004Cr 1  08 22 08 23  
+000050r 1  08 24 08 25  
+000054r 1  08 26 08 27  
+000058r 1  08 28 08 29  
+00005Cr 1  08 2A 08 2B  
+000060r 1  08 2C 08 2D  
+000064r 1  08 2E 08 2F  
+000068r 1  08 40 08 41  
+00006Cr 1  08 42 08 43  
+000070r 1  08 44 08 45  
+000074r 1  08 46 08 47  
+000078r 1  08 48 08 49  
+00007Cr 1  08 4A 08 4B  
+000080r 1  08 4C 08 4D  
+000084r 1  08 4E 08 4F  
+000088r 1  08 50 08 51  
+00008Cr 1  08 52 08 53  
+000090r 1  08 54 08 55  
+000094r 1  08 56 08 57  
+000098r 1  08 58 08 59  
+00009Cr 1  08 5A 08 5B  
+0000A0r 1  08 5C 08 5D  
+0000A4r 1  08 5E 08 5F  
+0000A8r 1  08 60 08 61  
+0000ACr 1  08 62 08 63  
+0000B0r 1  08 64 08 65  
+0000B4r 1  08 66 08 67  
+0000B8r 1  08 68 08 69  
+0000BCr 1  08 6A 08 6B  
+0000C0r 1  08 6C 08 6D  
+0000C4r 1  08 6E 08 6F  
+0000C8r 1  08 70 08 71  
+0000CCr 1  08 72 08 73  
+0000D0r 1  08 74 08 75  
+0000D4r 1  08 76 08 77  
+0000D8r 1  08 78 08 79  
+0000DCr 1  08 7A 08 7B  
+0000E0r 1  08 7C 08 7D  
+0000E4r 1  08 7E 08 7F  
+0000E8r 1  08 80 08 81  
+0000ECr 1  08 82 08 83  
+0000F0r 1  08 84 08 85  
+0000F4r 1  08 86 08 87  
+0000F8r 1  08 88 08 89  
+0000FCr 1  08 8A 08 8B  
+000100r 1  08 8C 08 8D  
+000104r 1  08 8E 08 8F  
+000108r 1  08 90 08 91  
+00010Cr 1  08 92 08 93  
+000110r 1  08 94 08 95  
+000114r 1  08 96 08 97  
+000118r 1  08 98 08 99  
+00011Cr 1  08 9A 08 9B  
+000120r 1  08 9C 08 9D  
+000124r 1  08 9E 08 9F  
+000128r 1  08 A0 08 A1  
+00012Cr 1  08 A2 08 A3  
+000130r 1  08 A4 08 A5  
+000134r 1  08 A6 08 A7  
+000138r 1  08 A8 08 A9  
+00013Cr 1  08 AA 08 AB  
+000140r 1  08 AC 08 AD  
+000144r 1  08 AE 08 AF  
+000148r 1  08 B0 08 B1  
+00014Cr 1  08 B2 08 B3  
+000150r 1  08 B4 08 B5  
+000154r 1  08 B6 08 B7  
+000158r 1  08 B8 08 B9  
+00015Cr 1  08 BA 08 BB  
+000160r 1  08 BC 08 BD  
+000164r 1  08 BE 08 BF  
+000168r 1  08 C0 08 C1  
+00016Cr 1  08 C2 08 C3  
+000170r 1  08 C4 08 C5  
+000174r 1  08 C6 08 C7  
+000178r 1  08 C8 08 C9  
+00017Cr 1  08 CA 08 CB  
+000180r 1  08 CC 08 CD  
+000184r 1  08 CE 08 CF  
+000188r 1  08 D0 08 D1  
+00018Cr 1  08 D2 08 D3  
+000190r 1  08 D4 08 D5  
+000194r 1  08 D6 08 D7  
+000198r 1  08 D8 08 D9  
+00019Cr 1  08 DA 08 DB  
+0001A0r 1  08 DC 08 DD  
+0001A4r 1  08 DE 08 DF  
+0001A8r 1  08 E0 08 E1  
+0001ACr 1  08 E2 08 E3  
+0001B0r 1  08 E4 08 E5  
+0001B4r 1  08 E6 08 E7  
+0001B8r 1  08 E8 08 E9  
+0001BCr 1  08 EA 08 EB  
+0001C0r 1  08 EC 08 ED  
+0001C4r 1  08 EE 08 EF  
+0001C8r 1  08 F0 08 F1  
+0001CCr 1  08 F2 08 F3  
+0001D0r 1  08 F4 08 F5  
+0001D4r 1  08 F6 08 F7  
+0001D8r 1  08 F8 08 F9  
+0001DCr 1  08 FA 08 FB  
+0001E0r 1  08 FC 08 FD  
+0001E4r 1  08 FE        
+0001E6r 1               
+0001E6r 1  0B 3A            oen HIGH
+0001E8r 1  04 00 08 28      m_print "?\r"
+0001ECr 1  08 29 08 2A  
+0001F0r 1  08 2B 08 2C  
+0001F4r 1  08 2D 09 2E  
+0001F8r 1  09 2F 08 3C  
+0001FCr 1  08 28 09 29  
+000200r 1  08 2A 08 2B  
+000204r 1  09 2C 09 2D  
+000208r 1  09 2E 09 2F  
+00020Cr 1  08 3C        
+00020Er 1  08 30            sto INREG
+000210r 1  01 30            ld INREG
+000212r 1  08 rr            sto temp
+000214r 1  0B 38            oen QRR
+000216r 1  04 00 08 28      m_print "Chose n\r"
+00021Ar 1  08 29 09 2A  
+00021Er 1  09 2B 09 2C  
+000222r 1  09 2D 08 2E  
+000226r 1  09 2F 08 3C  
+00022Ar 1  09 28 09 29  
+00022Er 1  09 2A 08 2B  
+000232r 1  09 2C 08 2D  
+000236r 1  08 2E 09 2F  
+00023Ar 1  08 3C 08 28  
+00023Er 1  08 29 08 2A  
+000242r 1  08 2B 09 2C  
+000246r 1  08 2D 08 2E  
+00024Ar 1  09 2F 08 3C  
+00024Er 1  08 28 08 29  
+000252r 1  09 2A 09 2B  
+000256r 1  08 2C 08 2D  
+00025Ar 1  08 2E 09 2F  
+00025Er 1  08 3C 08 28  
+000262r 1  09 29 08 2A  
+000266r 1  09 2B 09 2C  
+00026Ar 1  08 2D 08 2E  
+00026Er 1  09 2F 08 3C  
+000272r 1  09 28 09 29  
+000276r 1  09 2A 09 2B  
+00027Ar 1  09 2C 08 2D  
+00027Er 1  09 2E 09 2F  
+000282r 1  08 3C 09 28  
+000286r 1  08 29 08 2A  
+00028Ar 1  08 2B 09 2C  
+00028Er 1  08 2D 08 2E  
+000292r 1  09 2F 08 3C  
+000296r 1  08 28 09 29  
+00029Ar 1  08 2A 08 2B  
+00029Er 1  09 2C 09 2D  
+0002A2r 1  09 2E 09 2F  
+0002A6r 1  08 3C        
+0002A8r 1  0B rr            oen temp
+0002AAr 1  04 00 08 28      m_print "Chose y\r"
+0002AEr 1  08 29 09 2A  
+0002B2r 1  09 2B 09 2C  
+0002B6r 1  09 2D 08 2E  
+0002BAr 1  09 2F 08 3C  
+0002BEr 1  09 28 09 29  
+0002C2r 1  09 2A 08 2B  
+0002C6r 1  09 2C 08 2D  
+0002CAr 1  08 2E 09 2F  
+0002CEr 1  08 3C 08 28  
+0002D2r 1  08 29 08 2A  
+0002D6r 1  08 2B 09 2C  
+0002DAr 1  08 2D 08 2E  
+0002DEr 1  09 2F 08 3C  
+0002E2r 1  08 28 08 29  
+0002E6r 1  09 2A 09 2B  
+0002EAr 1  08 2C 08 2D  
+0002EEr 1  08 2E 09 2F  
+0002F2r 1  08 3C 08 28  
+0002F6r 1  09 29 08 2A  
+0002FAr 1  09 2B 09 2C  
+0002FEr 1  08 2D 08 2E  
+000302r 1  09 2F 08 3C  
+000306r 1  09 28 09 29  
+00030Ar 1  09 2A 09 2B  
+00030Er 1  09 2C 08 2D  
+000312r 1  09 2E 09 2F  
+000316r 1  08 3C 08 28  
+00031Ar 1  09 29 09 2A  
+00031Er 1  08 2B 08 2C  
+000322r 1  08 2D 08 2E  
+000326r 1  09 2F 08 3C  
+00032Ar 1  08 28 09 29  
+00032Er 1  08 2A 08 2B  
+000332r 1  09 2C 09 2D  
+000336r 1  09 2E 09 2F  
+00033Ar 1  08 3C        
+00033Cr 1               
+00033Cr 1  04 00            m_programend
+00033Cr 1               

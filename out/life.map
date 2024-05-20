@@ -1,0 +1,30 @@
+Modules list:
+-------------
+life.o:
+    CODE              Offs=000000  Size=008DCE  Align=00001  Fill=0000
+    MEMLOW            Offs=000000  Size=000009  Align=00001  Fill=0000
+    MEMHIGH           Offs=000000  Size=0000A2  Align=00001  Fill=0000
+
+
+Segment list:
+-------------
+Name                   Start     End    Size  Align
+----------------------------------------------------
+CODE                  000000  008DCD  008DCE  00001
+MEMLOW                000000  000008  000009  00001
+MEMHIGH               000040  0000E1  0000A2  00001
+
+
+Exports list by name:
+---------------------
+
+
+
+Exports list by value:
+----------------------
+
+
+
+Imports list:
+-------------
+

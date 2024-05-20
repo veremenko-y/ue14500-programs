@@ -1,0 +1,1580 @@
+ca65 V2.19 - Git d90cd11
+Main file   : count.s
+Current file: count.s
+
+000000r 1               ; Print 16 bit number sequentially
+000000r 1               
+000000r 1               .include "sdk/ue14500-tape.inc"
+000000r 2               .feature ubiquitous_idents
+000000r 2               .feature string_escapes
+000000r 2               .setcpu "none"
+000000r 2               
+000000r 2               ; Real-ish tape data
+000000r 2               ;   16 bit data bus, first 4 bits are ignored but stored in
+000000r 2               ;   executable in current implementation
+000000r 2               ;   8 bit address bus
+000000r 2               ;   xxxxIIII DDDDDDDD
+000000r 2               ; IO xxNNNNNN (first two bits are masked):
+000000r 2               ;   LD/STO  0x30-0x37   IO
+000000r 2               ;       STO 0x30     - Trigger to read 1 bit from input - yes/no
+000000r 2               ;       LD 0x30      - Read result
+000000r 2               ;       STO 0x31     - Write 7 byte ASCII into terminal
+000000r 2               ;       STO 0x32     - Break (any value)
+000000r 2               ;       0x33-0x37 - Reserved
+000000r 2               ;   LD/STO  0x38        QRR
+000000r 2               ;   LD/STO  0x39        RR
+000000r 2               ;   LD      0x3A-0x3B   High
+000000r 2               ;   LD      0x3C-0x3F   Low
+000000r 2               
+000000r 2               ; 0000 0: NOP0 = No change in registers. RR -> RR. FLG0 high.
+000000r 2               ; 0001 1: LD   = Load result register. Data -> RR.
+000000r 2               ; 0010 2: ADD  = Addition. D + RR -> RR.
+000000r 2               ; 0011 3: SUB  = Subtraction. QD + RR -> RR.
+000000r 2               ; 0100 4: ONE  = Force one. 1 -> RR. 0 -> CAR.
+000000r 2               ; 0101 5: NAND = Logical NAND. Q(RR * D) -> RR.
+000000r 2               ; 0110 6: OR   = Logical OR. RR + D -> RR.
+000000r 2               ; 0111 7: XOR  = Exclusive OR. RR != D -> RR.
+000000r 2               ; 1000 8: STO  = Store. RR -> Data. Write high if OEN.
+000000r 2               ; 1001 9: STOC = Store complement. QRR -> Data. Write high if OEN.
+000000r 2               ; 1010 A: IEN  = Input enable. D -> IEN.
+000000r 2               ; 1011 B: OEN  = Output enable. D -> OEN.
+000000r 2               ; 1100 C: JMP  = Jump. Jump high.
+000000r 2               ; 1101 D: RTN  = Return. RTN high. 1 -> Skip.
+000000r 2               ; 1110 E: SKZ  = Skip if zero. 1 -> Skip if RR == 0.
+000000r 2               ; 1111 F: NOPF = No change in registers. RR -> RR. FLGF high.
+000000r 2               
+000000r 2               .macro nop0 addr   ; 0000: NOP0 = No change in registers. RR -> RR. FLG0 high.
+000000r 2                   .byte 0
+000000r 2                   .if .blank(addr)
+000000r 2                   .byte 0
+000000r 2                   .else
+000000r 2                   .byte <addr
+000000r 2                   .endif
+000000r 2               .endmacro
+000000r 2               .macro ld addr    ; 0001: LD   = Load result register. Data -> RR.
+000000r 2                   .byte 1
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro add addr    ; 0010: ADD  = Addition. D + RR -> RR.
+000000r 2                   .byte 2
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro sub addr    ; 0011: SUB  = Subtraction. QD + RR -> RR.
+000000r 2                   .byte 3
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro one    ; 0100: ONE  = Force one. 1 -> RR. 0 -> CAR.
+000000r 2                   .byte 4
+000000r 2                   .byte 0
+000000r 2               .endmacro
+000000r 2               .macro nand addr   ; 0101: NAND = Logical NAND. Q(RR * D) -> RR.
+000000r 2                   .byte 5
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro or addr     ; 0110: OR   = Logical OR. RR + D -> RR.
+000000r 2                   .byte 6
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro xor addr    ; 0111: XOR  = Exclusive OR. RR != D -> RR.
+000000r 2                   .byte 7
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro sto addr    ; 1000: STO  = Store. RR -> Data. Write high if OEN.
+000000r 2                   .byte 8
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro stoc addr   ; 1001: STOC = Store complement. QRR -> Data. Write high if OEN.
+000000r 2                   .byte 9
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro ien addr   ; 1010: IEN  = Input enable. D -> IEN.
+000000r 2                   .byte 10
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro oen addr   ; 1011: OEN  = Output enable. D -> OEN.
+000000r 2                   .byte 11
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro jmp addr   ; 1100: JMP  = Jump. Jump high.
+000000r 2                   .byte 12
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               .macro rtn   ; 1101: RTN  = Return. RTN high. 1 -> Skip.
+000000r 2                   .byte 13
+000000r 2                   .byte 0
+000000r 2               .endmacro
+000000r 2               .macro skz   ; 1110: SKZ  = Skip if zero. 1 -> Skip if RR == 0.
+000000r 2                   .byte 14
+000000r 2                   .byte 0
+000000r 2               .endmacro
+000000r 2               .macro nopf addr  ; 1111: NOPF = No change
+000000r 2                   .byte 15
+000000r 2                   .byte <addr
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .define OUTREG $28 ; o61
+000000r 2               .define INREG $30 ; o60
+000000r 2               .define QRR $38 ; o70
+000000r 2               .define RR $39 ; o71
+000000r 2               .define HIGH $3a ; o72
+000000r 2               .define LOW $3c ; o74
+000000r 2               .define SHIFTOUT $3c ; o74
+000000r 2               .define BRK $3f ; o77
+000000r 2               
+000000r 2               .macro m_printbyte bits, addr
+000000r 2                   .repeat 8,I
+000000r 2                       .if (I < bits)
+000000r 2                           ld addr+I
+000000r 2                           sto OUTREG+I
+000000r 2                       .else
+000000r 2                           one
+000000r 2                           stoc OUTREG+I
+000000r 2                       .endif
+000000r 2                   .endrepeat
+000000r 2                   sto SHIFTOUT
+000000r 2               .endmacro
+000000r 2               
+000000r 2               
+000000r 2               .macro m_printbyteimm value
+000000r 2                   .repeat 8,I
+000000r 2                   .if (value & (1 << I)) <> 0
+000000r 2                   sto OUTREG+I ; 1
+000000r 2                   .else
+000000r 2                   stoc OUTREG+I ; 0
+000000r 2                   .endif
+000000r 2                   .endrepeat
+000000r 2                   sto SHIFTOUT
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_print str
+000000r 2                   one
+000000r 2                   .repeat .strlen(str), I
+000000r 2                   __tmp .set .strat(str, I)
+000000r 2                   m_printbyteimm __tmp
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_brk
+000000r 2                   sto BRK
+000000r 2               .endmacro
+000000r 2               
+000000r 2               ; Assumes RR register is 0 at start
+000000r 2               .macro m_programstart
+000000r 2                   ien HIGH
+000000r 2                   ien	HIGH
+000000r 2                   oen HIGH
+000000r 2                   oen QRR
+000000r 2                   .repeat $30,I
+000000r 2                   sto I
+000000r 2                   .endrepeat
+000000r 2                   .repeat $bf,I
+000000r 2                   sto $40+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               ; Must reset RR to 1 to avoid clearing RAM
+000000r 2               .macro m_programend
+000000r 2                   one
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_save_oen tmpAddr
+000000r 2                   one
+000000r 2                   sto tmpAddr
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_restore_oen tmpAddr
+000000r 2                   oen tmpAddr
+000000r 2                   one
+000000r 2                   stoc tmpAddr ; zero tmpoen if was 1
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_clc ; clear carry
+000000r 2                   one
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_sec ; set carry
+000000r 2                   ld HIGH
+000000r 2                   add HIGH
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_ctrr ; transfer carry to RR
+000000r 2                   ld LOW
+000000r 2                   add LOW
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_load bits, dstAddr, value
+000000r 2                   one
+000000r 2                   .repeat bits,I
+000000r 2                       .if (value & (1 << I)) <> 0
+000000r 2                       sto dstAddr+I; 1
+000000r 2                       .else
+000000r 2                       stoc dstAddr+I; 0
+000000r 2                       .endif
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_fill bits, dstAddr, value
+000000r 2                   one
+000000r 2                   .repeat bits,I
+000000r 2                       .if value = 0
+000000r 2                       stoc dstAddr+I; 0
+000000r 2                       .elseif value = 1
+000000r 2                       sto dstAddr+I; 1
+000000r 2                       .else
+000000r 2                       .out "Value must be 0 or 1"
+000000r 2                       .endif
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_cmp bits, targetAddr, compAddr
+000000r 2                   ; C: A>=B
+000000r 2                   ; !C: A<B
+000000r 2                   m_sec
+000000r 2                   .repeat bits,I
+000000r 2                       ld targetAddr+I
+000000r 2                       sub compAddr+I
+000000r 2                   .endrepeat
+000000r 2                   m_ctrr
+000000r 2                   .if .referenced(CFlag)
+000000r 2                   sto CFlag
+000000r 2                   .endif
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_cmpimmz bits, targetAddr, compValue
+000000r 2                   ; C: A>=B
+000000r 2                   ; !C: A<B
+000000r 2                   ; .out .sprintf("Cmp %d", compValue)
+000000r 2                   ; .if .not .referenced(ZFlag)
+000000r 2                   ;     .out "Memory for 1 bit with label ZFlag must be defined to use this macro."
+000000r 2                   ; .endif
+000000r 2                   one
+000000r 2                   stoc ZFlag
+000000r 2                   m_sec
+000000r 2                   .repeat bits,I
+000000r 2                       ld targetAddr+I
+000000r 2                       .if (compValue & (1 << I)) <> 0
+000000r 2                       ; .out "1"
+000000r 2                       sub HIGH
+000000r 2                       .else
+000000r 2                       ; .out "0"
+000000r 2                       sub LOW
+000000r 2                       .endif
+000000r 2                       or ZFlag ; z is 1 if result is 0
+000000r 2                       sto ZFlag
+000000r 2                   .endrepeat
+000000r 2                   .if .referenced(CFlag)
+000000r 2                   m_ctrr
+000000r 2                   sto CFlag
+000000r 2                   ld ZFlag ; z is 1 if carry is 1
+000000r 2                   .endif
+000000r 2                   stoc ZFlag ; invert z to get 1 if result is 0
+000000r 2                   ld ZFlag
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_cmpimm bits, targetAddr, compValue
+000000r 2                   ; C: A>=B
+000000r 2                   ; !C: A<B
+000000r 2                   m_sec
+000000r 2                   .repeat bits,I
+000000r 2                       ld targetAddr+I
+000000r 2                       .if (compValue & (1 << I)) <> 0
+000000r 2                       sub HIGH
+000000r 2                       .else
+000000r 2                       sub LOW
+000000r 2                       .endif
+000000r 2                   .endrepeat
+000000r 2                   m_ctrr
+000000r 2                   .if .referenced(CFlag)
+000000r 2                   sto CFlag
+000000r 2                   .endif
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_subout bits, op1Addr, op2Addr, outAddr
+000000r 2                   m_sec
+000000r 2                   .repeat bits,I
+000000r 2                   ld op1Addr+I
+000000r 2                   sub op2Addr+I
+000000r 2                   sto outAddr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_sub bits, op1Addr, op2Addr
+000000r 2                   m_subout bits, op1Addr, op2Addr, op1Addr
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_subimm bits, op1Addr, op2Value
+000000r 2                   m_sec
+000000r 2                   .repeat bits,I
+000000r 2                   ld op1Addr+I
+000000r 2                   .if (op2Value & (1 << I)) <> 0
+000000r 2                   sub HIGH
+000000r 2                   .else
+000000r 2                   sub LOW
+000000r 2                   .endif
+000000r 2                   sto op1Addr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_asl bits, value
+000000r 2                   m_clc
+000000r 2                   .repeat bits,I
+000000r 2                   ld value+I
+000000r 2                   add value+I
+000000r 2                   sto value+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_lsr bits, value
+000000r 2                   m_clc
+000000r 2                   .repeat bits,I
+000000r 2                   ld value+(bits-I-1)
+000000r 2                   add value+(bits-I-1)
+000000r 2                   sto value+(bits-I-1)
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               ; rotate left with carry
+000000r 2               .macro m_rol bits, value
+000000r 2                   .repeat bits,I
+000000r 2                   ld value+I
+000000r 2                   add value+I
+000000r 2                   sto value+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               ; rotate ror with carry
+000000r 2               .macro m_ror bits, value
+000000r 2                   .repeat bits,I
+000000r 2                   ld value+(bits-I-1)
+000000r 2                   add value+(bits-I-1)
+000000r 2                   sto value+(bits-I-1)
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_copy bits, srcAddr, dstAddr
+000000r 2                   .repeat bits,I
+000000r 2                   ld srcAddr+I
+000000r 2                   sto dstAddr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_addout bits, op1Addr, op2Addr, outAddr
+000000r 2                   m_clc
+000000r 2                   .repeat bits,I
+000000r 2                   ld op1Addr+I
+000000r 2                   add op2Addr+I
+000000r 2                   sto outAddr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_add bits, op1Addr, op2Addr
+000000r 2                   m_addout bits, op1Addr, op2Addr, op1Addr
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_adcimm bits, op1Addr, op2Value
+000000r 2                   .repeat bits,I
+000000r 2                   ld op1Addr+I
+000000r 2                   .if (op2Value & (1 << I)) <> 0
+000000r 2                   add HIGH
+000000r 2                   .else
+000000r 2                   add LOW
+000000r 2                   .endif
+000000r 2                   sto op1Addr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_xor bits, op1Addr, op2Value
+000000r 2                   .repeat bits,I
+000000r 2                   ld op1Addr+I
+000000r 2                   .if (op2Value & (1 << I)) <> 0
+000000r 2                   xor HIGH
+000000r 2                   .else
+000000r 2                   xor LOW
+000000r 2                   .endif
+000000r 2                   sto op1Addr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_addimm bits, op1Addr, op2Value
+000000r 2                   m_clc
+000000r 2                   .repeat bits,I
+000000r 2                   ld op1Addr+I
+000000r 2                   .if (op2Value & (1 << I)) <> 0
+000000r 2                   add HIGH
+000000r 2                   .else
+000000r 2                   add LOW
+000000r 2                   .endif
+000000r 2                   sto op1Addr+I
+000000r 2                   .endrepeat
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro __m_sqr16_iter valueAddr, resultAddr
+000000r 2               .scope
+000000r 2                   tempsq = scratchpad
+000000r 2                   currentbitsq = scratchpad + 8
+000000r 2               
+000000r 2                   m_asl 8, resultAddr ; low * 2
+000000r 2                   m_rol 8, resultAddr+8 ; high * 2 + carry
+000000r 2                   m_asl 8, currentbitsq ; shift number byte
+000000r 2                   m_ctrr ; read carry
+000000r 2                   oen RR ; if carry = 1
+000000r 2                   m_add 8, resultAddr, tempsq
+000000r 2                   m_adcimm 8, resultAddr+8, 0 ; add carry to result
+000000r 2                   oen tmpoen
+000000r 2               .endscope
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_sqr16 valueAddr, resultAddr
+000000r 2               .scope
+000000r 2                   tempsq = scratchpad
+000000r 2                   currentbitsq = scratchpad + 8
+000000r 2               
+000000r 2                   one
+000000r 2                   sto tmpoen
+000000r 2               
+000000r 2                   m_load 8, resultAddr, 0
+000000r 2                   m_copy 8, valueAddr, currentbitsq ; save low
+000000r 2                   ld valueAddr+15 ; check if negative
+000000r 2                   oen RR
+000000r 2                   m_xor 8, currentbitsq, $FF ; negate low byte
+000000r 2                   m_addimm 8, currentbitsq, 1 ; +1
+000000r 2                   oen tmpoen
+000000r 2                   m_copy 8, currentbitsq, tempsq ; save low ABS
+000000r 2               
+000000r 2                   ; do this 8 times
+000000r 2                   .repeat 8
+000000r 2                   __m_sqr16_iter valueAddr, resultAddr
+000000r 2                   .endrepeat
+000000r 2               
+000000r 2                   oen tmpoen
+000000r 2                   one
+000000r 2                   stoc tmpoen ; zero tmpoen if was 1
+000000r 2               .endscope
+000000r 2               .endmacro
+000000r 2               
+000000r 2               .macro m_mul16 op1Addr, op2Addr, resultAddr
+000000r 2               .scope
+000000r 2                   tempOp1 = scratchpad
+000000r 2                   tempOp2 = tempOp1 + 16
+000000r 2                   sign = tempOp2 + 16
+000000r 2               
+000000r 2                   one ; store current O
+000000r 2                   sto tmpoen
+000000r 2               
+000000r 2                   m_copy 16, op2Addr, tempOp2
+000000r 2                   ld tempOp2+15 ; calculate sign
+000000r 2                   sto sign
+000000r 2                   oen sign ; if negative, invert the number
+000000r 2                   m_xor 16, tempOp2, $ffff
+000000r 2                   m_addimm 16, tempOp2, 1
+000000r 2                   oen tmpoen
+000000r 2               
+000000r 2                   m_load 16, tempOp1, 0
+000000r 2                   m_copy 16, op1Addr, resultAddr
+000000r 2                   m_lsr 16, resultAddr
+000000r 2                   m_ctrr
+000000r 2                   sto CFlag
+000000r 2                   ; do this 8 times
+000000r 2                   .repeat 16
+000000r 2                       ; using oen RR or oen CFlag is bad
+000000r 2                       ; because they can be 0 or 1 depending on what ran first
+000000r 2                       ; but it's alright here, because when this code runs it doesn't
+000000r 2                       ; garble anything, then tmpoen restores the O state
+000000r 2                       oen CFlag ; if C = 0
+000000r 2                       m_sec
+000000r 2                       m_add 16, tempOp1, tempOp2
+000000r 2               
+000000r 2                       oen tmpoen ; always
+000000r 2                       m_clc
+000000r 2                       m_ror 16, tempOp1
+000000r 2                       m_ror 16, resultAddr
+000000r 2                       m_ctrr
+000000r 2                       sto CFlag
+000000r 2                   .endrepeat
+000000r 2               
+000000r 2                   oen sign ; negate result if negative
+000000r 2                   m_xor 16, resultAddr, $ffff
+000000r 2                   m_addimm 16, resultAddr, 1
+000000r 2                   oen tmpoen
+000000r 2                   one
+000000r 2                   stoc tmpoen ; zero tmpoen if was 1
+000000r 2               .endscope
+000000r 2               .endmacro
+000000r 2               
+000000r 1               
+000000r 1               .macro m_bcd16iter value, n
+000000r 1                   m_cmpimm 16, value, n
+000000r 1                   oen RR ; if carry set
+000000r 1                   m_subimm 16, value, n
+000000r 1                   oen HIGH
+000000r 1                   .if n >= 10000
+000000r 1                   m_rol 4, out1
+000000r 1                   .elseif n >= 1000
+000000r 1                   m_rol 4, out2
+000000r 1                   .elseif n >= 100
+000000r 1                   m_rol 4, out3
+000000r 1                   .else
+000000r 1                   m_rol 4, out4
+000000r 1                   .endif
+000000r 1               .endmacro
+000000r 1               
+000000r 1               .macro m_bcd16 value
+000000r 1                   one
+000000r 1                   stoc out1+0
+000000r 1                   m_bcd16iter value, 40000
+000000r 1                   m_bcd16iter value, 20000
+000000r 1                   m_bcd16iter value, 10000
+000000r 1                   m_bcd16iter value, 8000
+000000r 1                   m_bcd16iter value, 4000
+000000r 1                   m_bcd16iter value, 2000
+000000r 1                   m_bcd16iter value, 1000
+000000r 1                   m_bcd16iter value, 800
+000000r 1                   m_bcd16iter value, 400
+000000r 1                   m_bcd16iter value, 200
+000000r 1                   m_bcd16iter value, 100
+000000r 1                   m_bcd16iter value, 80
+000000r 1                   m_bcd16iter value, 40
+000000r 1                   m_bcd16iter value, 20
+000000r 1                   m_bcd16iter value, 10
+000000r 1                   m_copy 4, value, out5
+000000r 1               .endmacro
+000000r 1               
+000000r 1               .macro m_bcd16printNibble nibble
+000000r 1                   m_copy 4, nibble, OUTREG
+000000r 1                   one
+000000r 1                   sto OUTREG+4 ; [0-9] + '0'
+000000r 1                   sto OUTREG+5
+000000r 1                   stoc OUTREG+6
+000000r 1                   stoc OUTREG+7
+000000r 1                   sto SHIFTOUT
+000000r 1               .endmacro
+000000r 1               
+000000r 1               ; prints value distructively
+000000r 1               .macro m_bcd16print value
+000000r 1                   m_bcd16 value
+000000r 1                   m_bcd16printNibble out1
+000000r 1                   m_bcd16printNibble out2
+000000r 1                   m_bcd16printNibble out3
+000000r 1                   m_bcd16printNibble out4
+000000r 1                   m_bcd16printNibble out5
+000000r 1               .endmacro
+000000r 1               
+000000r 1               .segment "MEMLOW"
+000000r 1  xx xx xx xx      out1: .res 4 ; 1 BCD digit
+000004r 1  xx xx xx xx      out2: .res 4 ; 2 BCD digit
+000008r 1  xx xx xx xx      out3: .res 4 ; 3 BCD digit
+00000Cr 1  xx xx xx xx      out4: .res 4 ; 4 BCD digit
+000010r 1  xx xx xx xx      out5: .res 4 ; 5 BCD digit
+000014r 1  xx               init: .res 1
+000015r 1               .segment "MEMHIGH"
+000000r 1  xx xx xx xx      value1: .res 16
+000004r 1  xx xx xx xx  
+000008r 1  xx xx xx xx  
+00000Cr 1  xx xx xx xx  
+000010r 1  xx xx xx xx      valueTmp: .res 16
+000014r 1  xx xx xx xx  
+000018r 1  xx xx xx xx  
+00001Cr 1  xx xx xx xx  
+000020r 1               
+000020r 1               .segment "CODE"
+000000r 1  0A 3A 0A 3A      m_programstart
+000004r 1  0B 3A 0B 38  
+000008r 1  08 00 08 01  
+00000Cr 1  08 02 08 03  
+000010r 1  08 04 08 05  
+000014r 1  08 06 08 07  
+000018r 1  08 08 08 09  
+00001Cr 1  08 0A 08 0B  
+000020r 1  08 0C 08 0D  
+000024r 1  08 0E 08 0F  
+000028r 1  08 10 08 11  
+00002Cr 1  08 12 08 13  
+000030r 1  08 14 08 15  
+000034r 1  08 16 08 17  
+000038r 1  08 18 08 19  
+00003Cr 1  08 1A 08 1B  
+000040r 1  08 1C 08 1D  
+000044r 1  08 1E 08 1F  
+000048r 1  08 20 08 21  
+00004Cr 1  08 22 08 23  
+000050r 1  08 24 08 25  
+000054r 1  08 26 08 27  
+000058r 1  08 28 08 29  
+00005Cr 1  08 2A 08 2B  
+000060r 1  08 2C 08 2D  
+000064r 1  08 2E 08 2F  
+000068r 1  08 40 08 41  
+00006Cr 1  08 42 08 43  
+000070r 1  08 44 08 45  
+000074r 1  08 46 08 47  
+000078r 1  08 48 08 49  
+00007Cr 1  08 4A 08 4B  
+000080r 1  08 4C 08 4D  
+000084r 1  08 4E 08 4F  
+000088r 1  08 50 08 51  
+00008Cr 1  08 52 08 53  
+000090r 1  08 54 08 55  
+000094r 1  08 56 08 57  
+000098r 1  08 58 08 59  
+00009Cr 1  08 5A 08 5B  
+0000A0r 1  08 5C 08 5D  
+0000A4r 1  08 5E 08 5F  
+0000A8r 1  08 60 08 61  
+0000ACr 1  08 62 08 63  
+0000B0r 1  08 64 08 65  
+0000B4r 1  08 66 08 67  
+0000B8r 1  08 68 08 69  
+0000BCr 1  08 6A 08 6B  
+0000C0r 1  08 6C 08 6D  
+0000C4r 1  08 6E 08 6F  
+0000C8r 1  08 70 08 71  
+0000CCr 1  08 72 08 73  
+0000D0r 1  08 74 08 75  
+0000D4r 1  08 76 08 77  
+0000D8r 1  08 78 08 79  
+0000DCr 1  08 7A 08 7B  
+0000E0r 1  08 7C 08 7D  
+0000E4r 1  08 7E 08 7F  
+0000E8r 1  08 80 08 81  
+0000ECr 1  08 82 08 83  
+0000F0r 1  08 84 08 85  
+0000F4r 1  08 86 08 87  
+0000F8r 1  08 88 08 89  
+0000FCr 1  08 8A 08 8B  
+000100r 1  08 8C 08 8D  
+000104r 1  08 8E 08 8F  
+000108r 1  08 90 08 91  
+00010Cr 1  08 92 08 93  
+000110r 1  08 94 08 95  
+000114r 1  08 96 08 97  
+000118r 1  08 98 08 99  
+00011Cr 1  08 9A 08 9B  
+000120r 1  08 9C 08 9D  
+000124r 1  08 9E 08 9F  
+000128r 1  08 A0 08 A1  
+00012Cr 1  08 A2 08 A3  
+000130r 1  08 A4 08 A5  
+000134r 1  08 A6 08 A7  
+000138r 1  08 A8 08 A9  
+00013Cr 1  08 AA 08 AB  
+000140r 1  08 AC 08 AD  
+000144r 1  08 AE 08 AF  
+000148r 1  08 B0 08 B1  
+00014Cr 1  08 B2 08 B3  
+000150r 1  08 B4 08 B5  
+000154r 1  08 B6 08 B7  
+000158r 1  08 B8 08 B9  
+00015Cr 1  08 BA 08 BB  
+000160r 1  08 BC 08 BD  
+000164r 1  08 BE 08 BF  
+000168r 1  08 C0 08 C1  
+00016Cr 1  08 C2 08 C3  
+000170r 1  08 C4 08 C5  
+000174r 1  08 C6 08 C7  
+000178r 1  08 C8 08 C9  
+00017Cr 1  08 CA 08 CB  
+000180r 1  08 CC 08 CD  
+000184r 1  08 CE 08 CF  
+000188r 1  08 D0 08 D1  
+00018Cr 1  08 D2 08 D3  
+000190r 1  08 D4 08 D5  
+000194r 1  08 D6 08 D7  
+000198r 1  08 D8 08 D9  
+00019Cr 1  08 DA 08 DB  
+0001A0r 1  08 DC 08 DD  
+0001A4r 1  08 DE 08 DF  
+0001A8r 1  08 E0 08 E1  
+0001ACr 1  08 E2 08 E3  
+0001B0r 1  08 E4 08 E5  
+0001B4r 1  08 E6 08 E7  
+0001B8r 1  08 E8 08 E9  
+0001BCr 1  08 EA 08 EB  
+0001C0r 1  08 EC 08 ED  
+0001C4r 1  08 EE 08 EF  
+0001C8r 1  08 F0 08 F1  
+0001CCr 1  08 F2 08 F3  
+0001D0r 1  08 F4 08 F5  
+0001D4r 1  08 F6 08 F7  
+0001D8r 1  08 F8 08 F9  
+0001DCr 1  08 FA 08 FB  
+0001E0r 1  08 FC 08 FD  
+0001E4r 1  08 FE        
+0001E6r 1               
+0001E6r 1  01 rr            ld init  ;Load init into RR
+0001E8r 1  0B 38            oen QRR
+0001EAr 1  04 00 08 28      m_print "Count\r"
+0001EEr 1  08 29 09 2A  
+0001F2r 1  09 2B 09 2C  
+0001F6r 1  09 2D 08 2E  
+0001FAr 1  09 2F 08 3C  
+0001FEr 1  08 28 08 29  
+000202r 1  08 2A 08 2B  
+000206r 1  09 2C 08 2D  
+00020Ar 1  08 2E 09 2F  
+00020Er 1  08 3C 08 28  
+000212r 1  09 29 08 2A  
+000216r 1  09 2B 08 2C  
+00021Ar 1  08 2D 08 2E  
+00021Er 1  09 2F 08 3C  
+000222r 1  09 28 08 29  
+000226r 1  08 2A 08 2B  
+00022Ar 1  09 2C 08 2D  
+00022Er 1  08 2E 09 2F  
+000232r 1  08 3C 09 28  
+000236r 1  09 29 08 2A  
+00023Ar 1  09 2B 08 2C  
+00023Er 1  08 2D 08 2E  
+000242r 1  09 2F 08 3C  
+000246r 1  08 28 09 29  
+00024Ar 1  08 2A 08 2B  
+00024Er 1  09 2C 09 2D  
+000252r 1  09 2E 09 2F  
+000256r 1  08 3C        
+000258r 1  04 00            one
+00025Ar 1  08 rr            sto init
+00025Cr 1               
+00025Cr 1  0B 3A            oen HIGH  ;Turn OEN on again
+00025Er 1               
+00025Er 1                   ;Start Fibbo
+00025Er 1  04 00 01 rr      m_addimm 16, value1, 1
+000262r 1  02 3A 08 rr  
+000266r 1  01 rr 02 3C  
+00026Ar 1  08 rr 01 rr  
+00026Er 1  02 3C 08 rr  
+000272r 1  01 rr 02 3C  
+000276r 1  08 rr 01 rr  
+00027Ar 1  02 3C 08 rr  
+00027Er 1  01 rr 02 3C  
+000282r 1  08 rr 01 rr  
+000286r 1  02 3C 08 rr  
+00028Ar 1  01 rr 02 3C  
+00028Er 1  08 rr 01 rr  
+000292r 1  02 3C 08 rr  
+000296r 1  01 rr 02 3C  
+00029Ar 1  08 rr 01 rr  
+00029Er 1  02 3C 08 rr  
+0002A2r 1  01 rr 02 3C  
+0002A6r 1  08 rr 01 rr  
+0002AAr 1  02 3C 08 rr  
+0002AEr 1  01 rr 02 3C  
+0002B2r 1  08 rr 01 rr  
+0002B6r 1  02 3C 08 rr  
+0002BAr 1  01 rr 02 3C  
+0002BEr 1  08 rr        
+0002C0r 1  01 3C 02 3C      m_ctrr
+0002C4r 1  0E 00            skz
+0002C6r 1  08 3F            m_brk
+0002C8r 1  01 rr 08 rr      m_copy 16, value1, valueTmp
+0002CCr 1  01 rr 08 rr  
+0002D0r 1  01 rr 08 rr  
+0002D4r 1  01 rr 08 rr  
+0002D8r 1  01 rr 08 rr  
+0002DCr 1  01 rr 08 rr  
+0002E0r 1  01 rr 08 rr  
+0002E4r 1  01 rr 08 rr  
+0002E8r 1  01 rr 08 rr  
+0002ECr 1  01 rr 08 rr  
+0002F0r 1  01 rr 08 rr  
+0002F4r 1  01 rr 08 rr  
+0002F8r 1  01 rr 08 rr  
+0002FCr 1  01 rr 08 rr  
+000300r 1  01 rr 08 rr  
+000304r 1  01 rr 08 rr  
+000308r 1  04 00 09 rr      m_bcd16print valueTmp
+00030Cr 1  01 3A 02 3A  
+000310r 1  01 rr 03 3C  
+000314r 1  01 rr 03 3C  
+000318r 1  01 rr 03 3C  
+00031Cr 1  01 rr 03 3C  
+000320r 1  01 rr 03 3C  
+000324r 1  01 rr 03 3C  
+000328r 1  01 rr 03 3A  
+00032Cr 1  01 rr 03 3C  
+000330r 1  01 rr 03 3C  
+000334r 1  01 rr 03 3C  
+000338r 1  01 rr 03 3A  
+00033Cr 1  01 rr 03 3A  
+000340r 1  01 rr 03 3A  
+000344r 1  01 rr 03 3C  
+000348r 1  01 rr 03 3C  
+00034Cr 1  01 rr 03 3A  
+000350r 1  01 3C 02 3C  
+000354r 1  0B 39 01 3A  
+000358r 1  02 3A 01 rr  
+00035Cr 1  03 3C 08 rr  
+000360r 1  01 rr 03 3C  
+000364r 1  08 rr 01 rr  
+000368r 1  03 3C 08 rr  
+00036Cr 1  01 rr 03 3C  
+000370r 1  08 rr 01 rr  
+000374r 1  03 3C 08 rr  
+000378r 1  01 rr 03 3C  
+00037Cr 1  08 rr 01 rr  
+000380r 1  03 3A 08 rr  
+000384r 1  01 rr 03 3C  
+000388r 1  08 rr 01 rr  
+00038Cr 1  03 3C 08 rr  
+000390r 1  01 rr 03 3C  
+000394r 1  08 rr 01 rr  
+000398r 1  03 3A 08 rr  
+00039Cr 1  01 rr 03 3A  
+0003A0r 1  08 rr 01 rr  
+0003A4r 1  03 3A 08 rr  
+0003A8r 1  01 rr 03 3C  
+0003ACr 1  08 rr 01 rr  
+0003B0r 1  03 3C 08 rr  
+0003B4r 1  01 rr 03 3A  
+0003B8r 1  08 rr 0B 3A  
+0003BCr 1  01 rr 02 rr  
+0003C0r 1  08 rr 01 rr  
+0003C4r 1  02 rr 08 rr  
+0003C8r 1  01 rr 02 rr  
+0003CCr 1  08 rr 01 rr  
+0003D0r 1  02 rr 08 rr  
+0003D4r 1  01 3A 02 3A  
+0003D8r 1  01 rr 03 3C  
+0003DCr 1  01 rr 03 3C  
+0003E0r 1  01 rr 03 3C  
+0003E4r 1  01 rr 03 3C  
+0003E8r 1  01 rr 03 3C  
+0003ECr 1  01 rr 03 3A  
+0003F0r 1  01 rr 03 3C  
+0003F4r 1  01 rr 03 3C  
+0003F8r 1  01 rr 03 3C  
+0003FCr 1  01 rr 03 3A  
+000400r 1  01 rr 03 3A  
+000404r 1  01 rr 03 3A  
+000408r 1  01 rr 03 3C  
+00040Cr 1  01 rr 03 3C  
+000410r 1  01 rr 03 3A  
+000414r 1  01 rr 03 3C  
+000418r 1  01 3C 02 3C  
+00041Cr 1  0B 39 01 3A  
+000420r 1  02 3A 01 rr  
+000424r 1  03 3C 08 rr  
+000428r 1  01 rr 03 3C  
+00042Cr 1  08 rr 01 rr  
+000430r 1  03 3C 08 rr  
+000434r 1  01 rr 03 3C  
+000438r 1  08 rr 01 rr  
+00043Cr 1  03 3C 08 rr  
+000440r 1  01 rr 03 3A  
+000444r 1  08 rr 01 rr  
+000448r 1  03 3C 08 rr  
+00044Cr 1  01 rr 03 3C  
+000450r 1  08 rr 01 rr  
+000454r 1  03 3C 08 rr  
+000458r 1  01 rr 03 3A  
+00045Cr 1  08 rr 01 rr  
+000460r 1  03 3A 08 rr  
+000464r 1  01 rr 03 3A  
+000468r 1  08 rr 01 rr  
+00046Cr 1  03 3C 08 rr  
+000470r 1  01 rr 03 3C  
+000474r 1  08 rr 01 rr  
+000478r 1  03 3A 08 rr  
+00047Cr 1  01 rr 03 3C  
+000480r 1  08 rr 0B 3A  
+000484r 1  01 rr 02 rr  
+000488r 1  08 rr 01 rr  
+00048Cr 1  02 rr 08 rr  
+000490r 1  01 rr 02 rr  
+000494r 1  08 rr 01 rr  
+000498r 1  02 rr 08 rr  
+00049Cr 1  01 3A 02 3A  
+0004A0r 1  01 rr 03 3C  
+0004A4r 1  01 rr 03 3C  
+0004A8r 1  01 rr 03 3C  
+0004ACr 1  01 rr 03 3C  
+0004B0r 1  01 rr 03 3A  
+0004B4r 1  01 rr 03 3C  
+0004B8r 1  01 rr 03 3C  
+0004BCr 1  01 rr 03 3C  
+0004C0r 1  01 rr 03 3A  
+0004C4r 1  01 rr 03 3A  
+0004C8r 1  01 rr 03 3A  
+0004CCr 1  01 rr 03 3C  
+0004D0r 1  01 rr 03 3C  
+0004D4r 1  01 rr 03 3A  
+0004D8r 1  01 rr 03 3C  
+0004DCr 1  01 rr 03 3C  
+0004E0r 1  01 3C 02 3C  
+0004E4r 1  0B 39 01 3A  
+0004E8r 1  02 3A 01 rr  
+0004ECr 1  03 3C 08 rr  
+0004F0r 1  01 rr 03 3C  
+0004F4r 1  08 rr 01 rr  
+0004F8r 1  03 3C 08 rr  
+0004FCr 1  01 rr 03 3C  
+000500r 1  08 rr 01 rr  
+000504r 1  03 3A 08 rr  
+000508r 1  01 rr 03 3C  
+00050Cr 1  08 rr 01 rr  
+000510r 1  03 3C 08 rr  
+000514r 1  01 rr 03 3C  
+000518r 1  08 rr 01 rr  
+00051Cr 1  03 3A 08 rr  
+000520r 1  01 rr 03 3A  
+000524r 1  08 rr 01 rr  
+000528r 1  03 3A 08 rr  
+00052Cr 1  01 rr 03 3C  
+000530r 1  08 rr 01 rr  
+000534r 1  03 3C 08 rr  
+000538r 1  01 rr 03 3A  
+00053Cr 1  08 rr 01 rr  
+000540r 1  03 3C 08 rr  
+000544r 1  01 rr 03 3C  
+000548r 1  08 rr 0B 3A  
+00054Cr 1  01 rr 02 rr  
+000550r 1  08 rr 01 rr  
+000554r 1  02 rr 08 rr  
+000558r 1  01 rr 02 rr  
+00055Cr 1  08 rr 01 rr  
+000560r 1  02 rr 08 rr  
+000564r 1  01 3A 02 3A  
+000568r 1  01 rr 03 3C  
+00056Cr 1  01 rr 03 3C  
+000570r 1  01 rr 03 3C  
+000574r 1  01 rr 03 3C  
+000578r 1  01 rr 03 3C  
+00057Cr 1  01 rr 03 3C  
+000580r 1  01 rr 03 3A  
+000584r 1  01 rr 03 3C  
+000588r 1  01 rr 03 3A  
+00058Cr 1  01 rr 03 3A  
+000590r 1  01 rr 03 3A  
+000594r 1  01 rr 03 3A  
+000598r 1  01 rr 03 3A  
+00059Cr 1  01 rr 03 3C  
+0005A0r 1  01 rr 03 3C  
+0005A4r 1  01 rr 03 3C  
+0005A8r 1  01 3C 02 3C  
+0005ACr 1  0B 39 01 3A  
+0005B0r 1  02 3A 01 rr  
+0005B4r 1  03 3C 08 rr  
+0005B8r 1  01 rr 03 3C  
+0005BCr 1  08 rr 01 rr  
+0005C0r 1  03 3C 08 rr  
+0005C4r 1  01 rr 03 3C  
+0005C8r 1  08 rr 01 rr  
+0005CCr 1  03 3C 08 rr  
+0005D0r 1  01 rr 03 3C  
+0005D4r 1  08 rr 01 rr  
+0005D8r 1  03 3A 08 rr  
+0005DCr 1  01 rr 03 3C  
+0005E0r 1  08 rr 01 rr  
+0005E4r 1  03 3A 08 rr  
+0005E8r 1  01 rr 03 3A  
+0005ECr 1  08 rr 01 rr  
+0005F0r 1  03 3A 08 rr  
+0005F4r 1  01 rr 03 3A  
+0005F8r 1  08 rr 01 rr  
+0005FCr 1  03 3A 08 rr  
+000600r 1  01 rr 03 3C  
+000604r 1  08 rr 01 rr  
+000608r 1  03 3C 08 rr  
+00060Cr 1  01 rr 03 3C  
+000610r 1  08 rr 0B 3A  
+000614r 1  01 rr 02 rr  
+000618r 1  08 rr 01 rr  
+00061Cr 1  02 rr 08 rr  
+000620r 1  01 rr 02 rr  
+000624r 1  08 rr 01 rr  
+000628r 1  02 rr 08 rr  
+00062Cr 1  01 3A 02 3A  
+000630r 1  01 rr 03 3C  
+000634r 1  01 rr 03 3C  
+000638r 1  01 rr 03 3C  
+00063Cr 1  01 rr 03 3C  
+000640r 1  01 rr 03 3C  
+000644r 1  01 rr 03 3A  
+000648r 1  01 rr 03 3C  
+00064Cr 1  01 rr 03 3A  
+000650r 1  01 rr 03 3A  
+000654r 1  01 rr 03 3A  
+000658r 1  01 rr 03 3A  
+00065Cr 1  01 rr 03 3A  
+000660r 1  01 rr 03 3C  
+000664r 1  01 rr 03 3C  
+000668r 1  01 rr 03 3C  
+00066Cr 1  01 rr 03 3C  
+000670r 1  01 3C 02 3C  
+000674r 1  0B 39 01 3A  
+000678r 1  02 3A 01 rr  
+00067Cr 1  03 3C 08 rr  
+000680r 1  01 rr 03 3C  
+000684r 1  08 rr 01 rr  
+000688r 1  03 3C 08 rr  
+00068Cr 1  01 rr 03 3C  
+000690r 1  08 rr 01 rr  
+000694r 1  03 3C 08 rr  
+000698r 1  01 rr 03 3A  
+00069Cr 1  08 rr 01 rr  
+0006A0r 1  03 3C 08 rr  
+0006A4r 1  01 rr 03 3A  
+0006A8r 1  08 rr 01 rr  
+0006ACr 1  03 3A 08 rr  
+0006B0r 1  01 rr 03 3A  
+0006B4r 1  08 rr 01 rr  
+0006B8r 1  03 3A 08 rr  
+0006BCr 1  01 rr 03 3A  
+0006C0r 1  08 rr 01 rr  
+0006C4r 1  03 3C 08 rr  
+0006C8r 1  01 rr 03 3C  
+0006CCr 1  08 rr 01 rr  
+0006D0r 1  03 3C 08 rr  
+0006D4r 1  01 rr 03 3C  
+0006D8r 1  08 rr 0B 3A  
+0006DCr 1  01 rr 02 rr  
+0006E0r 1  08 rr 01 rr  
+0006E4r 1  02 rr 08 rr  
+0006E8r 1  01 rr 02 rr  
+0006ECr 1  08 rr 01 rr  
+0006F0r 1  02 rr 08 rr  
+0006F4r 1  01 3A 02 3A  
+0006F8r 1  01 rr 03 3C  
+0006FCr 1  01 rr 03 3C  
+000700r 1  01 rr 03 3C  
+000704r 1  01 rr 03 3C  
+000708r 1  01 rr 03 3A  
+00070Cr 1  01 rr 03 3C  
+000710r 1  01 rr 03 3A  
+000714r 1  01 rr 03 3A  
+000718r 1  01 rr 03 3A  
+00071Cr 1  01 rr 03 3A  
+000720r 1  01 rr 03 3A  
+000724r 1  01 rr 03 3C  
+000728r 1  01 rr 03 3C  
+00072Cr 1  01 rr 03 3C  
+000730r 1  01 rr 03 3C  
+000734r 1  01 rr 03 3C  
+000738r 1  01 3C 02 3C  
+00073Cr 1  0B 39 01 3A  
+000740r 1  02 3A 01 rr  
+000744r 1  03 3C 08 rr  
+000748r 1  01 rr 03 3C  
+00074Cr 1  08 rr 01 rr  
+000750r 1  03 3C 08 rr  
+000754r 1  01 rr 03 3C  
+000758r 1  08 rr 01 rr  
+00075Cr 1  03 3A 08 rr  
+000760r 1  01 rr 03 3C  
+000764r 1  08 rr 01 rr  
+000768r 1  03 3A 08 rr  
+00076Cr 1  01 rr 03 3A  
+000770r 1  08 rr 01 rr  
+000774r 1  03 3A 08 rr  
+000778r 1  01 rr 03 3A  
+00077Cr 1  08 rr 01 rr  
+000780r 1  03 3A 08 rr  
+000784r 1  01 rr 03 3C  
+000788r 1  08 rr 01 rr  
+00078Cr 1  03 3C 08 rr  
+000790r 1  01 rr 03 3C  
+000794r 1  08 rr 01 rr  
+000798r 1  03 3C 08 rr  
+00079Cr 1  01 rr 03 3C  
+0007A0r 1  08 rr 0B 3A  
+0007A4r 1  01 rr 02 rr  
+0007A8r 1  08 rr 01 rr  
+0007ACr 1  02 rr 08 rr  
+0007B0r 1  01 rr 02 rr  
+0007B4r 1  08 rr 01 rr  
+0007B8r 1  02 rr 08 rr  
+0007BCr 1  01 3A 02 3A  
+0007C0r 1  01 rr 03 3C  
+0007C4r 1  01 rr 03 3C  
+0007C8r 1  01 rr 03 3C  
+0007CCr 1  01 rr 03 3A  
+0007D0r 1  01 rr 03 3C  
+0007D4r 1  01 rr 03 3A  
+0007D8r 1  01 rr 03 3A  
+0007DCr 1  01 rr 03 3A  
+0007E0r 1  01 rr 03 3A  
+0007E4r 1  01 rr 03 3A  
+0007E8r 1  01 rr 03 3C  
+0007ECr 1  01 rr 03 3C  
+0007F0r 1  01 rr 03 3C  
+0007F4r 1  01 rr 03 3C  
+0007F8r 1  01 rr 03 3C  
+0007FCr 1  01 rr 03 3C  
+000800r 1  01 3C 02 3C  
+000804r 1  0B 39 01 3A  
+000808r 1  02 3A 01 rr  
+00080Cr 1  03 3C 08 rr  
+000810r 1  01 rr 03 3C  
+000814r 1  08 rr 01 rr  
+000818r 1  03 3C 08 rr  
+00081Cr 1  01 rr 03 3A  
+000820r 1  08 rr 01 rr  
+000824r 1  03 3C 08 rr  
+000828r 1  01 rr 03 3A  
+00082Cr 1  08 rr 01 rr  
+000830r 1  03 3A 08 rr  
+000834r 1  01 rr 03 3A  
+000838r 1  08 rr 01 rr  
+00083Cr 1  03 3A 08 rr  
+000840r 1  01 rr 03 3A  
+000844r 1  08 rr 01 rr  
+000848r 1  03 3C 08 rr  
+00084Cr 1  01 rr 03 3C  
+000850r 1  08 rr 01 rr  
+000854r 1  03 3C 08 rr  
+000858r 1  01 rr 03 3C  
+00085Cr 1  08 rr 01 rr  
+000860r 1  03 3C 08 rr  
+000864r 1  01 rr 03 3C  
+000868r 1  08 rr 0B 3A  
+00086Cr 1  01 rr 02 rr  
+000870r 1  08 rr 01 rr  
+000874r 1  02 rr 08 rr  
+000878r 1  01 rr 02 rr  
+00087Cr 1  08 rr 01 rr  
+000880r 1  02 rr 08 rr  
+000884r 1  01 3A 02 3A  
+000888r 1  01 rr 03 3C  
+00088Cr 1  01 rr 03 3C  
+000890r 1  01 rr 03 3C  
+000894r 1  01 rr 03 3C  
+000898r 1  01 rr 03 3C  
+00089Cr 1  01 rr 03 3A  
+0008A0r 1  01 rr 03 3C  
+0008A4r 1  01 rr 03 3C  
+0008A8r 1  01 rr 03 3A  
+0008ACr 1  01 rr 03 3A  
+0008B0r 1  01 rr 03 3C  
+0008B4r 1  01 rr 03 3C  
+0008B8r 1  01 rr 03 3C  
+0008BCr 1  01 rr 03 3C  
+0008C0r 1  01 rr 03 3C  
+0008C4r 1  01 rr 03 3C  
+0008C8r 1  01 3C 02 3C  
+0008CCr 1  0B 39 01 3A  
+0008D0r 1  02 3A 01 rr  
+0008D4r 1  03 3C 08 rr  
+0008D8r 1  01 rr 03 3C  
+0008DCr 1  08 rr 01 rr  
+0008E0r 1  03 3C 08 rr  
+0008E4r 1  01 rr 03 3C  
+0008E8r 1  08 rr 01 rr  
+0008ECr 1  03 3C 08 rr  
+0008F0r 1  01 rr 03 3A  
+0008F4r 1  08 rr 01 rr  
+0008F8r 1  03 3C 08 rr  
+0008FCr 1  01 rr 03 3C  
+000900r 1  08 rr 01 rr  
+000904r 1  03 3A 08 rr  
+000908r 1  01 rr 03 3A  
+00090Cr 1  08 rr 01 rr  
+000910r 1  03 3C 08 rr  
+000914r 1  01 rr 03 3C  
+000918r 1  08 rr 01 rr  
+00091Cr 1  03 3C 08 rr  
+000920r 1  01 rr 03 3C  
+000924r 1  08 rr 01 rr  
+000928r 1  03 3C 08 rr  
+00092Cr 1  01 rr 03 3C  
+000930r 1  08 rr 0B 3A  
+000934r 1  01 rr 02 rr  
+000938r 1  08 rr 01 rr  
+00093Cr 1  02 rr 08 rr  
+000940r 1  01 rr 02 rr  
+000944r 1  08 rr 01 rr  
+000948r 1  02 rr 08 rr  
+00094Cr 1  01 3A 02 3A  
+000950r 1  01 rr 03 3C  
+000954r 1  01 rr 03 3C  
+000958r 1  01 rr 03 3C  
+00095Cr 1  01 rr 03 3C  
+000960r 1  01 rr 03 3A  
+000964r 1  01 rr 03 3C  
+000968r 1  01 rr 03 3C  
+00096Cr 1  01 rr 03 3A  
+000970r 1  01 rr 03 3A  
+000974r 1  01 rr 03 3C  
+000978r 1  01 rr 03 3C  
+00097Cr 1  01 rr 03 3C  
+000980r 1  01 rr 03 3C  
+000984r 1  01 rr 03 3C  
+000988r 1  01 rr 03 3C  
+00098Cr 1  01 rr 03 3C  
+000990r 1  01 3C 02 3C  
+000994r 1  0B 39 01 3A  
+000998r 1  02 3A 01 rr  
+00099Cr 1  03 3C 08 rr  
+0009A0r 1  01 rr 03 3C  
+0009A4r 1  08 rr 01 rr  
+0009A8r 1  03 3C 08 rr  
+0009ACr 1  01 rr 03 3C  
+0009B0r 1  08 rr 01 rr  
+0009B4r 1  03 3A 08 rr  
+0009B8r 1  01 rr 03 3C  
+0009BCr 1  08 rr 01 rr  
+0009C0r 1  03 3C 08 rr  
+0009C4r 1  01 rr 03 3A  
+0009C8r 1  08 rr 01 rr  
+0009CCr 1  03 3A 08 rr  
+0009D0r 1  01 rr 03 3C  
+0009D4r 1  08 rr 01 rr  
+0009D8r 1  03 3C 08 rr  
+0009DCr 1  01 rr 03 3C  
+0009E0r 1  08 rr 01 rr  
+0009E4r 1  03 3C 08 rr  
+0009E8r 1  01 rr 03 3C  
+0009ECr 1  08 rr 01 rr  
+0009F0r 1  03 3C 08 rr  
+0009F4r 1  01 rr 03 3C  
+0009F8r 1  08 rr 0B 3A  
+0009FCr 1  01 rr 02 rr  
+000A00r 1  08 rr 01 rr  
+000A04r 1  02 rr 08 rr  
+000A08r 1  01 rr 02 rr  
+000A0Cr 1  08 rr 01 rr  
+000A10r 1  02 rr 08 rr  
+000A14r 1  01 3A 02 3A  
+000A18r 1  01 rr 03 3C  
+000A1Cr 1  01 rr 03 3C  
+000A20r 1  01 rr 03 3C  
+000A24r 1  01 rr 03 3A  
+000A28r 1  01 rr 03 3C  
+000A2Cr 1  01 rr 03 3C  
+000A30r 1  01 rr 03 3A  
+000A34r 1  01 rr 03 3A  
+000A38r 1  01 rr 03 3C  
+000A3Cr 1  01 rr 03 3C  
+000A40r 1  01 rr 03 3C  
+000A44r 1  01 rr 03 3C  
+000A48r 1  01 rr 03 3C  
+000A4Cr 1  01 rr 03 3C  
+000A50r 1  01 rr 03 3C  
+000A54r 1  01 rr 03 3C  
+000A58r 1  01 3C 02 3C  
+000A5Cr 1  0B 39 01 3A  
+000A60r 1  02 3A 01 rr  
+000A64r 1  03 3C 08 rr  
+000A68r 1  01 rr 03 3C  
+000A6Cr 1  08 rr 01 rr  
+000A70r 1  03 3C 08 rr  
+000A74r 1  01 rr 03 3A  
+000A78r 1  08 rr 01 rr  
+000A7Cr 1  03 3C 08 rr  
+000A80r 1  01 rr 03 3C  
+000A84r 1  08 rr 01 rr  
+000A88r 1  03 3A 08 rr  
+000A8Cr 1  01 rr 03 3A  
+000A90r 1  08 rr 01 rr  
+000A94r 1  03 3C 08 rr  
+000A98r 1  01 rr 03 3C  
+000A9Cr 1  08 rr 01 rr  
+000AA0r 1  03 3C 08 rr  
+000AA4r 1  01 rr 03 3C  
+000AA8r 1  08 rr 01 rr  
+000AACr 1  03 3C 08 rr  
+000AB0r 1  01 rr 03 3C  
+000AB4r 1  08 rr 01 rr  
+000AB8r 1  03 3C 08 rr  
+000ABCr 1  01 rr 03 3C  
+000AC0r 1  08 rr 0B 3A  
+000AC4r 1  01 rr 02 rr  
+000AC8r 1  08 rr 01 rr  
+000ACCr 1  02 rr 08 rr  
+000AD0r 1  01 rr 02 rr  
+000AD4r 1  08 rr 01 rr  
+000AD8r 1  02 rr 08 rr  
+000ADCr 1  01 3A 02 3A  
+000AE0r 1  01 rr 03 3C  
+000AE4r 1  01 rr 03 3C  
+000AE8r 1  01 rr 03 3A  
+000AECr 1  01 rr 03 3C  
+000AF0r 1  01 rr 03 3C  
+000AF4r 1  01 rr 03 3A  
+000AF8r 1  01 rr 03 3A  
+000AFCr 1  01 rr 03 3C  
+000B00r 1  01 rr 03 3C  
+000B04r 1  01 rr 03 3C  
+000B08r 1  01 rr 03 3C  
+000B0Cr 1  01 rr 03 3C  
+000B10r 1  01 rr 03 3C  
+000B14r 1  01 rr 03 3C  
+000B18r 1  01 rr 03 3C  
+000B1Cr 1  01 rr 03 3C  
+000B20r 1  01 3C 02 3C  
+000B24r 1  0B 39 01 3A  
+000B28r 1  02 3A 01 rr  
+000B2Cr 1  03 3C 08 rr  
+000B30r 1  01 rr 03 3C  
+000B34r 1  08 rr 01 rr  
+000B38r 1  03 3A 08 rr  
+000B3Cr 1  01 rr 03 3C  
+000B40r 1  08 rr 01 rr  
+000B44r 1  03 3C 08 rr  
+000B48r 1  01 rr 03 3A  
+000B4Cr 1  08 rr 01 rr  
+000B50r 1  03 3A 08 rr  
+000B54r 1  01 rr 03 3C  
+000B58r 1  08 rr 01 rr  
+000B5Cr 1  03 3C 08 rr  
+000B60r 1  01 rr 03 3C  
+000B64r 1  08 rr 01 rr  
+000B68r 1  03 3C 08 rr  
+000B6Cr 1  01 rr 03 3C  
+000B70r 1  08 rr 01 rr  
+000B74r 1  03 3C 08 rr  
+000B78r 1  01 rr 03 3C  
+000B7Cr 1  08 rr 01 rr  
+000B80r 1  03 3C 08 rr  
+000B84r 1  01 rr 03 3C  
+000B88r 1  08 rr 0B 3A  
+000B8Cr 1  01 rr 02 rr  
+000B90r 1  08 rr 01 rr  
+000B94r 1  02 rr 08 rr  
+000B98r 1  01 rr 02 rr  
+000B9Cr 1  08 rr 01 rr  
+000BA0r 1  02 rr 08 rr  
+000BA4r 1  01 3A 02 3A  
+000BA8r 1  01 rr 03 3C  
+000BACr 1  01 rr 03 3C  
+000BB0r 1  01 rr 03 3C  
+000BB4r 1  01 rr 03 3C  
+000BB8r 1  01 rr 03 3A  
+000BBCr 1  01 rr 03 3C  
+000BC0r 1  01 rr 03 3A  
+000BC4r 1  01 rr 03 3C  
+000BC8r 1  01 rr 03 3C  
+000BCCr 1  01 rr 03 3C  
+000BD0r 1  01 rr 03 3C  
+000BD4r 1  01 rr 03 3C  
+000BD8r 1  01 rr 03 3C  
+000BDCr 1  01 rr 03 3C  
+000BE0r 1  01 rr 03 3C  
+000BE4r 1  01 rr 03 3C  
+000BE8r 1  01 3C 02 3C  
+000BECr 1  0B 39 01 3A  
+000BF0r 1  02 3A 01 rr  
+000BF4r 1  03 3C 08 rr  
+000BF8r 1  01 rr 03 3C  
+000BFCr 1  08 rr 01 rr  
+000C00r 1  03 3C 08 rr  
+000C04r 1  01 rr 03 3C  
+000C08r 1  08 rr 01 rr  
+000C0Cr 1  03 3A 08 rr  
+000C10r 1  01 rr 03 3C  
+000C14r 1  08 rr 01 rr  
+000C18r 1  03 3A 08 rr  
+000C1Cr 1  01 rr 03 3C  
+000C20r 1  08 rr 01 rr  
+000C24r 1  03 3C 08 rr  
+000C28r 1  01 rr 03 3C  
+000C2Cr 1  08 rr 01 rr  
+000C30r 1  03 3C 08 rr  
+000C34r 1  01 rr 03 3C  
+000C38r 1  08 rr 01 rr  
+000C3Cr 1  03 3C 08 rr  
+000C40r 1  01 rr 03 3C  
+000C44r 1  08 rr 01 rr  
+000C48r 1  03 3C 08 rr  
+000C4Cr 1  01 rr 03 3C  
+000C50r 1  08 rr 0B 3A  
+000C54r 1  01 rr 02 rr  
+000C58r 1  08 rr 01 rr  
+000C5Cr 1  02 rr 08 rr  
+000C60r 1  01 rr 02 rr  
+000C64r 1  08 rr 01 rr  
+000C68r 1  02 rr 08 rr  
+000C6Cr 1  01 3A 02 3A  
+000C70r 1  01 rr 03 3C  
+000C74r 1  01 rr 03 3C  
+000C78r 1  01 rr 03 3C  
+000C7Cr 1  01 rr 03 3A  
+000C80r 1  01 rr 03 3C  
+000C84r 1  01 rr 03 3A  
+000C88r 1  01 rr 03 3C  
+000C8Cr 1  01 rr 03 3C  
+000C90r 1  01 rr 03 3C  
+000C94r 1  01 rr 03 3C  
+000C98r 1  01 rr 03 3C  
+000C9Cr 1  01 rr 03 3C  
+000CA0r 1  01 rr 03 3C  
+000CA4r 1  01 rr 03 3C  
+000CA8r 1  01 rr 03 3C  
+000CACr 1  01 rr 03 3C  
+000CB0r 1  01 3C 02 3C  
+000CB4r 1  0B 39 01 3A  
+000CB8r 1  02 3A 01 rr  
+000CBCr 1  03 3C 08 rr  
+000CC0r 1  01 rr 03 3C  
+000CC4r 1  08 rr 01 rr  
+000CC8r 1  03 3C 08 rr  
+000CCCr 1  01 rr 03 3A  
+000CD0r 1  08 rr 01 rr  
+000CD4r 1  03 3C 08 rr  
+000CD8r 1  01 rr 03 3A  
+000CDCr 1  08 rr 01 rr  
+000CE0r 1  03 3C 08 rr  
+000CE4r 1  01 rr 03 3C  
+000CE8r 1  08 rr 01 rr  
+000CECr 1  03 3C 08 rr  
+000CF0r 1  01 rr 03 3C  
+000CF4r 1  08 rr 01 rr  
+000CF8r 1  03 3C 08 rr  
+000CFCr 1  01 rr 03 3C  
+000D00r 1  08 rr 01 rr  
+000D04r 1  03 3C 08 rr  
+000D08r 1  01 rr 03 3C  
+000D0Cr 1  08 rr 01 rr  
+000D10r 1  03 3C 08 rr  
+000D14r 1  01 rr 03 3C  
+000D18r 1  08 rr 0B 3A  
+000D1Cr 1  01 rr 02 rr  
+000D20r 1  08 rr 01 rr  
+000D24r 1  02 rr 08 rr  
+000D28r 1  01 rr 02 rr  
+000D2Cr 1  08 rr 01 rr  
+000D30r 1  02 rr 08 rr  
+000D34r 1  01 3A 02 3A  
+000D38r 1  01 rr 03 3C  
+000D3Cr 1  01 rr 03 3C  
+000D40r 1  01 rr 03 3A  
+000D44r 1  01 rr 03 3C  
+000D48r 1  01 rr 03 3A  
+000D4Cr 1  01 rr 03 3C  
+000D50r 1  01 rr 03 3C  
+000D54r 1  01 rr 03 3C  
+000D58r 1  01 rr 03 3C  
+000D5Cr 1  01 rr 03 3C  
+000D60r 1  01 rr 03 3C  
+000D64r 1  01 rr 03 3C  
+000D68r 1  01 rr 03 3C  
+000D6Cr 1  01 rr 03 3C  
+000D70r 1  01 rr 03 3C  
+000D74r 1  01 rr 03 3C  
+000D78r 1  01 3C 02 3C  
+000D7Cr 1  0B 39 01 3A  
+000D80r 1  02 3A 01 rr  
+000D84r 1  03 3C 08 rr  
+000D88r 1  01 rr 03 3C  
+000D8Cr 1  08 rr 01 rr  
+000D90r 1  03 3A 08 rr  
+000D94r 1  01 rr 03 3C  
+000D98r 1  08 rr 01 rr  
+000D9Cr 1  03 3A 08 rr  
+000DA0r 1  01 rr 03 3C  
+000DA4r 1  08 rr 01 rr  
+000DA8r 1  03 3C 08 rr  
+000DACr 1  01 rr 03 3C  
+000DB0r 1  08 rr 01 rr  
+000DB4r 1  03 3C 08 rr  
+000DB8r 1  01 rr 03 3C  
+000DBCr 1  08 rr 01 rr  
+000DC0r 1  03 3C 08 rr  
+000DC4r 1  01 rr 03 3C  
+000DC8r 1  08 rr 01 rr  
+000DCCr 1  03 3C 08 rr  
+000DD0r 1  01 rr 03 3C  
+000DD4r 1  08 rr 01 rr  
+000DD8r 1  03 3C 08 rr  
+000DDCr 1  01 rr 03 3C  
+000DE0r 1  08 rr 0B 3A  
+000DE4r 1  01 rr 02 rr  
+000DE8r 1  08 rr 01 rr  
+000DECr 1  02 rr 08 rr  
+000DF0r 1  01 rr 02 rr  
+000DF4r 1  08 rr 01 rr  
+000DF8r 1  02 rr 08 rr  
+000DFCr 1  01 3A 02 3A  
+000E00r 1  01 rr 03 3C  
+000E04r 1  01 rr 03 3A  
+000E08r 1  01 rr 03 3C  
+000E0Cr 1  01 rr 03 3A  
+000E10r 1  01 rr 03 3C  
+000E14r 1  01 rr 03 3C  
+000E18r 1  01 rr 03 3C  
+000E1Cr 1  01 rr 03 3C  
+000E20r 1  01 rr 03 3C  
+000E24r 1  01 rr 03 3C  
+000E28r 1  01 rr 03 3C  
+000E2Cr 1  01 rr 03 3C  
+000E30r 1  01 rr 03 3C  
+000E34r 1  01 rr 03 3C  
+000E38r 1  01 rr 03 3C  
+000E3Cr 1  01 rr 03 3C  
+000E40r 1  01 3C 02 3C  
+000E44r 1  0B 39 01 3A  
+000E48r 1  02 3A 01 rr  
+000E4Cr 1  03 3C 08 rr  
+000E50r 1  01 rr 03 3A  
+000E54r 1  08 rr 01 rr  
+000E58r 1  03 3C 08 rr  
+000E5Cr 1  01 rr 03 3A  
+000E60r 1  08 rr 01 rr  
+000E64r 1  03 3C 08 rr  
+000E68r 1  01 rr 03 3C  
+000E6Cr 1  08 rr 01 rr  
+000E70r 1  03 3C 08 rr  
+000E74r 1  01 rr 03 3C  
+000E78r 1  08 rr 01 rr  
+000E7Cr 1  03 3C 08 rr  
+000E80r 1  01 rr 03 3C  
+000E84r 1  08 rr 01 rr  
+000E88r 1  03 3C 08 rr  
+000E8Cr 1  01 rr 03 3C  
+000E90r 1  08 rr 01 rr  
+000E94r 1  03 3C 08 rr  
+000E98r 1  01 rr 03 3C  
+000E9Cr 1  08 rr 01 rr  
+000EA0r 1  03 3C 08 rr  
+000EA4r 1  01 rr 03 3C  
+000EA8r 1  08 rr 0B 3A  
+000EACr 1  01 rr 02 rr  
+000EB0r 1  08 rr 01 rr  
+000EB4r 1  02 rr 08 rr  
+000EB8r 1  01 rr 02 rr  
+000EBCr 1  08 rr 01 rr  
+000EC0r 1  02 rr 08 rr  
+000EC4r 1  01 rr 08 rr  
+000EC8r 1  01 rr 08 rr  
+000ECCr 1  01 rr 08 rr  
+000ED0r 1  01 rr 08 rr  
+000ED4r 1  01 rr 08 28  
+000ED8r 1  01 rr 08 29  
+000EDCr 1  01 rr 08 2A  
+000EE0r 1  01 rr 08 2B  
+000EE4r 1  04 00 08 2C  
+000EE8r 1  08 2D 09 2E  
+000EECr 1  09 2F 08 3C  
+000EF0r 1  01 rr 08 28  
+000EF4r 1  01 rr 08 29  
+000EF8r 1  01 rr 08 2A  
+000EFCr 1  01 rr 08 2B  
+000F00r 1  04 00 08 2C  
+000F04r 1  08 2D 09 2E  
+000F08r 1  09 2F 08 3C  
+000F0Cr 1  01 rr 08 28  
+000F10r 1  01 rr 08 29  
+000F14r 1  01 rr 08 2A  
+000F18r 1  01 rr 08 2B  
+000F1Cr 1  04 00 08 2C  
+000F20r 1  08 2D 09 2E  
+000F24r 1  09 2F 08 3C  
+000F28r 1  01 rr 08 28  
+000F2Cr 1  01 rr 08 29  
+000F30r 1  01 rr 08 2A  
+000F34r 1  01 rr 08 2B  
+000F38r 1  04 00 08 2C  
+000F3Cr 1  08 2D 09 2E  
+000F40r 1  09 2F 08 3C  
+000F44r 1  01 rr 08 28  
+000F48r 1  01 rr 08 29  
+000F4Cr 1  01 rr 08 2A  
+000F50r 1  01 rr 08 2B  
+000F54r 1  04 00 08 2C  
+000F58r 1  08 2D 09 2E  
+000F5Cr 1  09 2F 08 3C  
+000F60r 1  04 00 08 28      m_print "\r"
+000F64r 1  09 29 08 2A  
+000F68r 1  08 2B 09 2C  
+000F6Cr 1  09 2D 09 2E  
+000F70r 1  09 2F 08 3C  
+000F74r 1               
+000F74r 1  04 00            m_programend
+000F74r 1               

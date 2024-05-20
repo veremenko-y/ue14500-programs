@@ -1,0 +1,30 @@
+Modules list:
+-------------
+fibo8.o:
+    CODE              Offs=000000  Size=0009FE  Align=00001  Fill=0000
+    MEMLOW            Offs=000000  Size=00000D  Align=00001  Fill=0000
+    MEMHIGH           Offs=000000  Size=000020  Align=00001  Fill=0000
+
+
+Segment list:
+-------------
+Name                   Start     End    Size  Align
+----------------------------------------------------
+CODE                  000000  0009FD  0009FE  00001
+MEMLOW                000000  00000C  00000D  00001
+MEMHIGH               000040  00005F  000020  00001
+
+
+Exports list by name:
+---------------------
+
+
+
+Exports list by value:
+----------------------
+
+
+
+Imports list:
+-------------
+

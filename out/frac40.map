@@ -1,0 +1,30 @@
+Modules list:
+-------------
+frac40.o:
+    CODE              Offs=000000  Size=003814  Align=00001  Fill=0000
+    MEMLOW            Offs=000000  Size=000027  Align=00001  Fill=0000
+    MEMHIGH           Offs=000000  Size=000089  Align=00001  Fill=0000
+
+
+Segment list:
+-------------
+Name                   Start     End    Size  Align
+----------------------------------------------------
+CODE                  000000  003813  003814  00001
+MEMLOW                000000  000026  000027  00001
+MEMHIGH               000040  0000C8  000089  00001
+
+
+Exports list by name:
+---------------------
+
+
+
+Exports list by value:
+----------------------
+
+
+
+Imports list:
+-------------
+

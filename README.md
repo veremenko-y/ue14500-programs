@@ -4,5 +4,4 @@ See relevant playlist at https://www.youtube.com/watch?v=oPA8dHtf_6M&list=PLnw98
 
 ## Build
 
-Building requires cc65.exe and ld65.exe placed in `cc65/` folder.
-`./build.ps1` needs to be run in PowerShell
+Make sure cc65 is installed and available in path. Run `make`
